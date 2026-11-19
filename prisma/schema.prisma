@@ -1,0 +1,306 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// ROLE & USER (Staff รวมเป็นตารางเดียว)
+// ============================================
+
+/// บทบาทผู้ใช้งานระบบ (Staff เท่านั้น)
+model Role {
+  roleId      Int     @id @default(autoincrement()) @map("role_id")
+  roleName    String  @unique @map("role_name") @db.VarChar(50) /// admin, frontdesk, housekeeping, maintenance_staff
+  description String? @db.VarChar(255)
+
+  users User[]
+
+  @@map("roles")
+}
+
+/// ตารางกลางของ Staff ทุกคน - login/auth ที่เดียว แยก role ด้วย roleId
+model User {
+  userId    Int      @id @default(autoincrement()) @map("user_id")
+  username  String   @unique @db.VarChar(50)
+  password  String   @db.VarChar(255)
+  fullName  String?  @map("full_name") @db.VarChar(100)
+  email     String?  @db.VarChar(100)
+  phone     String?  @db.VarChar(20)
+  roleId    Int      @map("role_id")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  role Role @relation(fields: [roleId], references: [roleId])
+
+  frontdeskProfile    FrontDeskProfile?
+  housekeepingProfile HousekeepingProfile?
+  maintenanceProfile  MaintenanceProfile?
+
+  roomStatusLogsChanged       RoomStatusLog[]      @relation("ChangedByUser")
+  maintenanceRequestsReported MaintenanceRequest[] @relation("ReportedByUser")
+  bookingsCreated             Booking[]            @relation("CreatedByUser")
+  paymentsReceived            Payment[]            @relation("ReceivedByUser")
+
+  @@map("users")
+}
+
+/// ข้อมูลเฉพาะพนักงานต้อนรับ
+model FrontDeskProfile {
+  userId Int    @id @map("user_id")
+  shift  Shift?
+
+  user User @relation(fields: [userId], references: [userId])
+
+  @@map("frontdesk_profiles")
+}
+
+/// ข้อมูลเฉพาะแม่บ้าน
+model HousekeepingProfile {
+  userId          Int     @id @map("user_id")
+  zoneResponsible String? @map("zone_responsible") @db.VarChar(50)
+
+  user User @relation(fields: [userId], references: [userId])
+
+  @@map("housekeeping_profiles")
+}
+
+/// ข้อมูลเฉพาะช่างซ่อมบำรุง
+model MaintenanceProfile {
+  userId    Int     @id @map("user_id")
+  specialty String? @db.VarChar(50)
+
+  user                User                 @relation(fields: [userId], references: [userId])
+  assignedMaintenance MaintenanceRequest[] @relation("AssignedMaintenance")
+
+  @@map("maintenance_profiles")
+}
+
+// ============================================
+// CUSTOMER (แยกอิสระ ไม่รวมกับ users)
+// ============================================
+
+/// ลูกค้า/แขกที่เข้าพัก - auth คนละชุดกับ staff
+model Customer {
+  customerId   Int      @id @default(autoincrement()) @map("customer_id")
+  username     String?  @unique @db.VarChar(50)
+  password     String?  @db.VarChar(255)
+  fullName     String   @map("full_name") @db.VarChar(100)
+  email        String?  @db.VarChar(100)
+  phone        String?  @db.VarChar(20)
+  idCardNumber String?  @map("id_card_number") @db.VarChar(20)
+  nationality  String?  @db.VarChar(50)
+  address      String?  @db.Text
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  bookings Booking[]
+
+  @@map("tb_customer")
+}
+
+// ============================================
+// ROOM TABLES
+// ============================================
+
+model RoomType {
+  roomTypeId  Int     @id @default(autoincrement()) @map("room_type_id")
+  typeName    String  @map("type_name") @db.VarChar(50)
+  basePrice   Decimal @map("base_price") @db.Decimal(10, 2)
+  capacity    Int?
+  description String? @db.Text
+
+  rooms Room[]
+
+  @@map("room_types")
+}
+
+model Room {
+  roomId     Int        @id @default(autoincrement()) @map("room_id")
+  roomNumber String     @unique @map("room_number") @db.VarChar(10)
+  floor      Int
+  roomTypeId Int        @map("room_type_id")
+  status     RoomStatus @default(available)
+  createdAt  DateTime   @default(now()) @map("created_at")
+
+  roomType            RoomType            @relation(fields: [roomTypeId], references: [roomTypeId])
+  roomImages          RoomImage[]
+  roomAmenities       RoomAmenity[]
+  bookings            Booking[]
+  roomStatusLogs      RoomStatusLog[]
+  maintenanceRequests MaintenanceRequest[]
+
+  @@map("rooms")
+}
+
+model Amenity {
+  amenityId   Int    @id @default(autoincrement()) @map("amenity_id")
+  amenityName String @unique @map("amenity_name") @db.VarChar(50)
+
+  roomAmenities RoomAmenity[]
+
+  @@map("amenities")
+}
+
+model RoomAmenity {
+  roomId    Int @map("room_id")
+  amenityId Int @map("amenity_id")
+
+  room    Room    @relation(fields: [roomId], references: [roomId])
+  amenity Amenity @relation(fields: [amenityId], references: [amenityId])
+
+  @@id([roomId, amenityId])
+  @@map("room_amenities")
+}
+
+model RoomImage {
+  imageId    Int      @id @default(autoincrement()) @map("image_id")
+  roomId     Int?     @map("room_id")
+  imageUrl   String?  @map("image_url") @db.VarChar(255)
+  uploadedAt DateTime @default(now()) @map("uploaded_at")
+
+  room Room? @relation(fields: [roomId], references: [roomId])
+
+  @@map("room_images")
+}
+
+// ============================================
+// BOOKING TABLES
+// ============================================
+
+model Booking {
+  bookingId      Int           @id @default(autoincrement()) @map("booking_id")
+  customerId     Int           @map("customer_id")
+  roomId         Int           @map("room_id")
+  checkInDate    DateTime      @map("check_in_date") @db.Date
+  checkOutDate   DateTime      @map("check_out_date") @db.Date
+  actualCheckIn  DateTime?     @map("actual_check_in")
+  actualCheckOut DateTime?     @map("actual_check_out")
+  numGuests      Int           @default(1) @map("num_guests")
+  totalPrice     Decimal?      @map("total_price") @db.Decimal(10, 2)
+  bookingStatus  BookingStatus @default(pending) @map("booking_status")
+  bookingSource  BookingSource @default(website) @map("booking_source")
+  createdById    Int?          @map("created_by_id")
+  createdAt      DateTime      @default(now()) @map("created_at")
+
+  customer  Customer  @relation(fields: [customerId], references: [customerId])
+  room      Room      @relation(fields: [roomId], references: [roomId])
+  createdBy User?     @relation("CreatedByUser", fields: [createdById], references: [userId])
+  payments  Payment[]
+
+  @@map("bookings")
+}
+
+model Payment {
+  paymentId     Int            @id @default(autoincrement()) @map("payment_id")
+  bookingId     Int            @map("booking_id")
+  amount        Decimal        @db.Decimal(10, 2)
+  paymentMethod PaymentMethod? @map("payment_method")
+  paymentStatus PaymentStatus  @default(pending) @map("payment_status")
+  paidAt        DateTime?      @map("paid_at")
+  receivedById  Int?           @map("received_by_id")
+
+  booking    Booking @relation(fields: [bookingId], references: [bookingId])
+  receivedBy User?   @relation("ReceivedByUser", fields: [receivedById], references: [userId])
+
+  @@map("payments")
+}
+
+// ============================================
+// LOG / TRANSACTION TABLES
+// ============================================
+
+model RoomStatusLog {
+  logId       Int      @id @default(autoincrement()) @map("log_id")
+  roomId      Int?     @map("room_id")
+  oldStatus   String?  @map("old_status") @db.VarChar(20)
+  newStatus   String?  @map("new_status") @db.VarChar(20)
+  changedById Int      @map("changed_by_id")
+  changedAt   DateTime @default(now()) @map("changed_at")
+  remark      String?  @db.Text
+
+  room      Room? @relation(fields: [roomId], references: [roomId])
+  changedBy User  @relation("ChangedByUser", fields: [changedById], references: [userId])
+
+  @@map("room_status_logs")
+}
+
+model MaintenanceRequest {
+  requestId               Int               @id @default(autoincrement()) @map("request_id")
+  roomId                  Int?              @map("room_id")
+  reportedById            Int               @map("reported_by_id")
+  assignedToMaintenanceId Int?              @map("assigned_to_maintenance_id")
+  issueDescription        String?           @map("issue_description") @db.Text
+  status                  MaintenanceStatus @default(pending)
+  reportedAt              DateTime          @default(now()) @map("reported_at")
+  resolvedAt              DateTime?         @map("resolved_at")
+
+  room                Room?               @relation(fields: [roomId], references: [roomId])
+  reportedBy          User                @relation("ReportedByUser", fields: [reportedById], references: [userId])
+  assignedMaintenance MaintenanceProfile? @relation("AssignedMaintenance", fields: [assignedToMaintenanceId], references: [userId])
+
+  @@map("maintenance_requests")
+}
+
+// ============================================
+// ENUMS
+// ============================================
+
+enum Shift {
+  morning
+  afternoon
+  night
+}
+
+enum RoomStatus {
+  available
+  occupied
+  reserved
+  cleaning
+  maintenance
+}
+
+enum BookingStatus {
+  pending
+  confirmed
+  checked_in
+  checked_out
+  cancelled
+}
+
+enum BookingSource {
+  walk_in
+  phone
+  website
+  ota
+}
+
+enum PaymentMethod {
+  cash
+  credit_card
+  bank_transfer
+  promptpay
+}
+
+enum PaymentStatus {
+  pending
+  paid
+  refunded
+  failed
+}
+
+enum MaintenanceStatus {
+  pending
+  in_progress
+  resolved
+}
